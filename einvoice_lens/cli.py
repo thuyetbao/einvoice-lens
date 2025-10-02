@@ -16,7 +16,7 @@ if __name__ == "__main__":
         prog="python -m einvoice_lens.cli",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent("""
-        [Einvoice Lens] CLI
+        [Einvoice Lens] Parse an e-invoice into structured output
 
         Usage
         -----
@@ -29,7 +29,7 @@ if __name__ == "__main__":
         """),
         epilog="Copyright (c) of Thuyet Bao"
     )
-    parser.add_argument("--path", help="Path to the PDF file", type=str)
+    parser.add_argument("--path", help="Path to the PDF file", type=str, required=True)
     parameters = parser.parse_args()
 
     # Parse

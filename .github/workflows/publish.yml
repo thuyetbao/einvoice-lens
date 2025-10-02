@@ -6,7 +6,7 @@ on:
       - created
 
 env:
-  UV_SYSTEM_PYTHON: 1
+  HATCH_VERBOSE: 0
 
 jobs:
   publish:
@@ -38,8 +38,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv pip install --upgrade "pip>=25.1.1,<26.0.0";
-          uv pip install "$(cat requirements-dev.txt | grep hatch)";
+          uv pip install --upgrade "pip>=25.1.1,<26.0.0" --system;
+          uv pip install "$(cat requirements-dev.txt | grep hatch)" --system;
 
       - name: Build distribution
         run: hatch build

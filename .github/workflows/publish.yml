@@ -1,6 +1,7 @@
 name: Publish package to PyPI
 
 on:
+  push:
   release:
     types:
       - created
@@ -40,12 +41,13 @@ jobs:
         run: |
           uv pip install --upgrade "pip>=25.1.1,<26.0.0";
           uv pip install "$(cat requirements-dev.txt | grep hatch)";
+          hatch --version
 
       - name: Build distribution
         run: hatch build
 
-      - name: Publish
-        uses: pypa/gh-action-pypi-publish@v1.12.4
+      # - name: Publish
+      #   uses: pypa/gh-action-pypi-publish@v1.12.4
 
       - name: Dump GitHub context
         env:

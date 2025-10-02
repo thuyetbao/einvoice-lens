@@ -37,6 +37,7 @@ path = "einvoice_lens/__init__.py"
 [tool.hatch.envs.default]
 installer = "uv"
 dependencies = [
+  "hatch>=1.12.1,<1.15.0",
   "uv>=0.7.3,<0.8.0",
   "coverage[toml]>=6.5",
   "pytest>=8.2.0,<8.5.0",

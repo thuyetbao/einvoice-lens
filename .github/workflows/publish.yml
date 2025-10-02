@@ -8,6 +8,7 @@ on:
 
 env:
   UV_SYSTEM_PYTHON: 1
+  HATCH_VERBOSE: 1
 
 jobs:
   publish:

@@ -1,0 +1,72 @@
+site_name: Einvoice Lens
+site_description: Einvoice Lens Documentation
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    primary: indigo
+    accent: grey
+  icon:
+    logo: material/rocket
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    # - navigation.top
+    - navigation.sections
+    - navigation.tabs
+    # - navigation.tabs.sticky
+    - search.highlight
+    - search.suggest
+    - search.share
+    - content.code.copy
+    - content.code.select
+
+repo_name: thuyetbao/einvoice-lens
+repo_url: https://github.com/thuyetbao/einvoice-lens.git
+edit_uri: ""
+copyright: Copyright &copy; trthuyetbao@gmail.com
+
+plugins:
+  - tags
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
+      fallback_to_build_date: true
+      enable_git_follow: false
+  - git-authors
+  - glightbox
+
+markdown_extensions:
+  - markdown_include.include:
+      base_path: docs
+  - toc:
+      permalink: true
+  - admonition
+  - codehilite
+  - pymdownx.tasklist
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - md_in_html
+  - footnotes
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Introduction: index.md
+  - SAD: sad.md
+  - Headstart: headstart.md
+  - Troubleshooting: troubleshooting.md

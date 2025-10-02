@@ -1,0 +1,6 @@
+mkdocs-material>=9.5.5,<9.7.0
+mkdocs-git-revision-date-localized-plugin
+mkdocs-git-authors-plugin
+pymdown-extensions
+markdown-include
+mkdocs-glightbox

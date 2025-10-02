@@ -1,0 +1,41 @@
+name: Validate Code Regulation
+
+on:
+  push:
+    paths:
+      - "ruff.toml"
+      - "einvoice_lens/*.py"
+      - ".github/workflows/compliance.yml"
+  workflow_dispatch:
+
+env:
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  compliance:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: ">=0.7.3,<0.9.0"
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          uv pip install --upgrade "pip>=25.1.1,<26.0.0";
+          uv pip install $(grep -v '^#' requirements-dev.txt | grep ruff);
+
+      # Include `--output-format=github` to enable automatic inline annotations.
+      - name: Run validate progress
+        run: uv run ruff check --output-format=github einvoice-lens

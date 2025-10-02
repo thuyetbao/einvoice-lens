@@ -37,7 +37,6 @@ path = "einvoice_lens/__init__.py"
 [tool.hatch.envs.default]
 installer = "uv"
 dependencies = [
-  "hatch>=1.12.1,<1.15.0",
   "uv>=0.7.3,<0.8.0",
   "coverage[toml]>=6.5",
   "pytest>=8.2.0,<8.5.0",
@@ -93,7 +92,7 @@ include = ["einvoice_lens/**"]
 exclude = [".github", "docs", "tests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["einvoice-lens"]
+packages = ["einvoice_lens"]
 only-packages = true
 include = ["einvoice_lens/**"]
 exclude = [".github", "docs", "tests"]

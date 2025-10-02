@@ -2,10 +2,10 @@ name: Package - Test
 
 on:
   push:
-  #   paths:
-  #     - "einvoice_lens/*.py"
-  #     - "tests/**"
-  #     - ".github/workflows/test.yml"
+    paths:
+      - "einvoice_lens/*.py"
+      - "tests/**"
+      - ".github/workflows/test.yml"
   workflow_dispatch:
 
 env:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

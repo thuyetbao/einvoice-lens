@@ -25,3 +25,12 @@ tests/test_extract_document.py::test_extract_document_base_case
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 ========================================================================================== 1 passed, 1 warning in 0.42s ==========================================================================================
 ```
+
+- [ ] Add support for `Python 3.14`. See: <https://github.com/thuyetbao/einvoice-lens/actions/runs/18183864131/job/51764582139>
+
+```bash
+Installed versions
+  Version 3.14 was not found in the local cache
+  Error: The version '3.14' with architecture 'x64' was not found for Ubuntu 22.04.
+  The list of all available versions can be found here: https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json
+```

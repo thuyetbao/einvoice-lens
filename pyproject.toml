@@ -18,7 +18,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
+  # "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "pdfplumber>=0.11.5,<0.12",
@@ -89,13 +89,13 @@ exclude_lines = ["no cov", "if __name__ == .__main__.:", "if TYPE_CHECKING:"]
 
 [tool.hatch.build.targets.sdist]
 include = ["einvoice_lens/**"]
-exclude = [".github", "docs"]
+exclude = [".github", "docs", "tests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["einvoice-lens"]
 only-packages = true
 include = ["einvoice_lens/**"]
-exclude = [".github", "docs"]
+exclude = [".github", "docs", "tests"]
 
 [tool.hatch.publish.index]
 disable = false

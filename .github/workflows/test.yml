@@ -2,10 +2,10 @@ name: Package - Test
 
 on:
   push:
-  #   paths:
-  #     - "einvoice_lens/*.py"
-  #     - "tests/**"
-  #     - ".github/workflows/test.yml"
+    paths:
+      - "einvoice_lens/*.py"
+      - "tests/**"
+      - ".github/workflows/test.yml"
   workflow_dispatch:
 
 env:

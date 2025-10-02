@@ -38,4 +38,4 @@ jobs:
 
       # Include `--output-format=github` to enable automatic inline annotations.
       - name: Run validate progress
-        run: uv run ruff check --output-format=github einvoice-lens
+        run: uv run ruff check --output-format=github einvoice_lens

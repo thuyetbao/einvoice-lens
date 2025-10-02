@@ -11,13 +11,13 @@
 
 <div align="center">
   <a href="https://github.com/thuyetbao/einvoice-lens.git" target="_blank">
-    <img src="https://img.shields.io/pypi/v/einvoice_lens.svg?logo=pypi" alt="Package Version">
+    <img src="https://img.shields.io/pypi/v/einvoice-lens.svg?logo=pypi" alt="Package Version">
   </a>
 </div>
 
 <div align="center">
   <a href="https://www.python.org/" target="_blank">
-    <img src="https://img.shields.io/pypi/pyversions/einvoice_lens.svg?logo=python" alt="Supported Python Version">
+    <img src="https://img.shields.io/pypi/pyversions/einvoice-lens.svg?logo=python" alt="Supported Python Version">
   </a>
   <br>
   <a href="https://pre-commit.com/" target="_blank">
@@ -39,12 +39,26 @@
 
 - Extracts structured output of sale invoice
 
+- Command-line interface to integrate with shell scripts and automation workflows
+
 ## **Usage**
 
 Install package from PyPI distribution [`einvoice-lens`](https://pypi.org/project/einvoice-lens/)
 
 ```bash
 pip install einvoice-lens
+```
+
+```py
+from  einvoice_lens import parse_commerical_invoice
+
+output = parse_commerical_invoice(path="path/to/document.pdf")
+```
+
+or, using cli by
+
+```bash
+python -m einvoice_lens.cli --path path/to/document.pdf
 ```
 
 **Documentation**:

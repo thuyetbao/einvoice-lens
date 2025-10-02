@@ -92,8 +92,8 @@ include = ["einvoice_lens/**"]
 exclude = [".github", "docs", "tests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["einvoice_lens"]
-only-packages = true
+# packages = ["einvoice_lens"]
+# only-packages = true
 include = ["einvoice_lens/**"]
 exclude = [".github", "docs", "tests"]
 

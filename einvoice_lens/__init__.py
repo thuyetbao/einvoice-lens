@@ -8,4 +8,4 @@ __all__ = [
     "parse_commerical_invoice",
 ]
 
-__version__ = "0.2.1"
+__version__ = "0.2.3"

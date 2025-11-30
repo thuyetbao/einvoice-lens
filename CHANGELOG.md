@@ -6,6 +6,8 @@
 
 - [x] (fix) Fixed warning on `Expr.map_elements` in `parse_commerical_invoice`
 
+- [x] (docs) Updated README document
+
 ## v0.1.3 (2025-10-02)
 
 - [x] (docs) Updated README

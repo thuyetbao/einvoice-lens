@@ -50,7 +50,7 @@ pip install einvoice-lens
 ```
 
 ```py
-from  einvoice_lens import parse_commerical_invoice
+from einvoice_lens import parse_commerical_invoice
 
 output = parse_commerical_invoice(path="path/to/document.pdf")
 ```

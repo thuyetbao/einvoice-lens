@@ -17,7 +17,7 @@
 
 <div align="center">
   <a href="https://www.python.org/" target="_blank">
-    <img src="https://img.shields.io/pypi/pyversions/einvoice-lens.svg?logo=python" alt="Supported Python Version">
+    <img src="https://img.shields.io/pypi/pyversions/einvoice-lens.svg?logo=python" alt="Supported Python versions">
   </a>
   <br>
   <a href="https://pre-commit.com/" target="_blank">

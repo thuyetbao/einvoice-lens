@@ -16,14 +16,17 @@
 </div>
 
 <div align="center">
-  <a href="https://www.python.org/" target="_blank">
-    <img src="https://img.shields.io/pypi/pyversions/einvoice-lens.svg?logo=python" alt="Supported Python Version">
+  <a href="https://python.org/" target="_blank">
+    <img src="https://img.shields.io/pypi/pyversions/einvoice-lens.svg?logo=python" alt="Supported Python versions">
   </a>
   <br>
   <a href="https://pre-commit.com/" target="_blank">
     <img src="https://img.shields.io/badge/pre--commit-enabled-teal?logo=pre-commit" alt="pre-commit enabled">
   </a>
-  <a href="https://pre-commit.com/" target="_blank">
+  <a href="https://github.com/astral-sh/ruff" target="_blank">
+    <img src="https://img.shields.io/badge/ruff-enabled-teal?logo=ruff" alt="ruff enabled">
+  </a>
+  <a href="https://peps.python.org/pep-0008/" target="_blank">
     <img src="https://img.shields.io/badge/pep8-enabled-teal?logo=python" alt="pep8 enabled">
   </a>
   <a href="https://github.com/features/actions" target="_blank">
@@ -50,7 +53,7 @@ pip install einvoice-lens
 ```
 
 ```py
-from  einvoice_lens import parse_commerical_invoice
+from einvoice_lens import parse_commerical_invoice
 
 output = parse_commerical_invoice(path="path/to/document.pdf")
 ```

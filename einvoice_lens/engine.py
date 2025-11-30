@@ -12,6 +12,7 @@ import unicodedata
 import pdfplumber
 import polars as pl
 import google_crc32c
+import strx
 
 
 def calculate_checksum_crc32c_on(path):
@@ -140,6 +141,22 @@ def _is_group_total_amount_in_words(element: list[str]) -> bool:
 
 
 def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
+    """Parse commerical invoice from PDF file into structured output
+
+    Args
+    ----
+    path (str): The path into PDF file
+
+    Return
+    ------
+    CommericalInvoiceResult: The result of commerical invoice parsing
+
+    Usage
+    -----
+    >>> from einvoice_lens import parse_commerical_invoice
+    >>> path = "path/to/input.pdf"
+    >>> result = parse_commerical_invoice(path)
+    """
 
     if not pathlib.Path(path).exists():
         raise ValueError(f"Not exist the document on path={path!r}")
@@ -148,8 +165,8 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
         raise ValueError(f"Invaid extension of pdf. Got {path.split('.')[1]} file type")
 
     # Local use
-    def _pipeline_text_transform(x: str) -> str:
-        return x.replace("\xad", "").strip()
+    def _pipeline_text_transform(*, string: str) -> str:
+        return strx.str_normalize(string=string.encode("utf-8").decode("utf-8"), form="NFKC", strip=True).replace("\xad", "")
 
     # Checkpoint
     _start = datetime.now(tz=timezoneUTC)
@@ -171,9 +188,10 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
     profile_content = {}
 
     # Component
-    # (Information) The attribute of the document mostly in the first page only and it's repeatable for format (same with others page)
+    # (Information) The attribute of the document mostly in the first page only
+    #   and it's repeatable for format (same with others page)
     # So that we can regex on the first page line by line
-    first_page_content = _pipeline_text_transform(document.pages[0].extract_text())
+    first_page_content = _pipeline_text_transform(string=document.pages[0].extract_text())
 
     # Format is somehow can't not defined by rule
     if "electronic invoice display" in first_page_content.lower():
@@ -185,11 +203,11 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
     for on_ind, on_text in enumerate(first_page_bucket_line_content, start=0):
 
         # Normalized
-        nor_on_text = _pipeline_text_transform(on_text)
+        nor_on_text = _pipeline_text_transform(string=on_text)
         nor_on_next_text = None
 
         try:
-            nor_on_next_text = _pipeline_text_transform(first_page_bucket_line_content[on_ind + 1])
+            nor_on_next_text = _pipeline_text_transform(string=first_page_bucket_line_content[on_ind + 1])
         except IndexError:
             pass
 
@@ -391,7 +409,11 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
                     continue
 
                 # Normalization
-                noralization_record = [_pipeline_text_transform(x=text).replace("\n", " ") if text is not None else None for text in record]
+                noralization_record = [
+                    _pipeline_text_transform(string=text).replace("\n", " ")
+                    if text is not None else None
+                    for text in record
+                ]
 
                 # Check duplication
                 if noralization_record in table_elements:
@@ -435,15 +457,13 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
         strict=False
     )
 
+    # Transform
     dataset = (
         dataset
-        # Pre-transform
         .with_columns([
             pl.col("no").cast(pl.Int64, strict=True).name.keep(),
             pl.col("product_description").str.replace_all("\n", " ").name.keep(),
-            # Note: not use str.to_titlecase because it's make by bytes: chiếc -> Chiếc (The last c characters).
-            # We want output from chiếc -> Chiếc, hộp -> Hộp
-            pl.col("unit").str.to_lowercase().map_elements(lambda s: str(s).title(), return_dtype=pl.String).name.keep(),
+            pl.col("unit").cast(pl.String).str.to_titlecase().name.keep(),
             pl.col("quantity").cast(pl.Int64, strict=True).name.keep(),
             pl.col(["unit_price", "amount"]).str.replace_all(".", "", literal=True).cast(pl.Float64).name.keep(),
         ])

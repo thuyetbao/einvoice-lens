@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1 (2025-12-04)
+
+- [x] (fix) Updated pipelines transformation on text string and configuration form in normalize
+
+- [x] (deps) Removed `polars` as the dependencies
+
 ## v0.2.3 (2025-11-30)
 
 - [x] (feature) Normalized string output using the `strx` package.

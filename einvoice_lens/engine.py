@@ -2,7 +2,6 @@
 
 # Global
 import os
-from typing import TypedDict, Literal
 import pathlib
 from datetime import date, datetime, UTC as timezoneUTC
 import re
@@ -10,98 +9,12 @@ import unicodedata
 
 # External
 import pdfplumber
-import polars as pl
-import google_crc32c
 import strx
 
-
-def calculate_checksum_crc32c_on(path):
-    crc = google_crc32c.Checksum()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            crc.update(chunk)
-    return crc.digest().hex()
-
-
-class DigitalSignature(TypedDict):
-    # "digital_signature": {
-    #   "certificate_serial": "1234567890ABCDEF",
-    #   "issuer": "VNPT-CA",
-    #   "signed_at": "2025-09-28T14:32:00+07:00",
-    #   "signature_value": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A..."
-    # }
-    certificate_serial: str
-    issuer: str | None
-    signed_at: str
-    signature_value: str
-
-
-class DocumentAttribute(TypedDict):
-    document_type: Literal["SALES_INVOICE", "UNKNOWN"] | None
-    display_format: str | None
-    issue_date: date | None
-    tax_agent_code: str | None
-    serial_no: str | None
-    invoice_number: str | None
-    digital_signature: str | None
-
-
-class SellerInformation(TypedDict):
-    name: str
-    tax_code: str
-    address: str
-    tel: str | None
-    email: str | None
-    fax: str | None
-    account_number: str | None
-
-
-class BuyerInformation(TypedDict):
-    name: str | None
-    company: str | None
-    tax_code: str
-    address: str | None
-    tel: str | None
-    email: str | None
-    fax: str | None
-    account_number: str | None
-
-
-class InvoicePartnerInformation(TypedDict):
-    name: str
-    endpoint_search_invoice: str | None
-    search_keyword_id: str | None
-    tax_code: str | None
-    contact: str | None
-    logo: str | None
-
-
-class CommericalInvoiceProfile(TypedDict):
-    attribute: DocumentAttribute
-    seller: SellerInformation
-    buyer: BuyerInformation
-    invoice_partner: InvoicePartnerInformation
-
-
-class PipelineMetadata(TypedDict):
-    start: datetime
-    end: datetime
-    processing_in_seconds: float
-
-
-class RuntimeMetadata(TypedDict):
-    source_path: str
-    checksum_crc32c: str | None
-    total_pages: int
-    file_size_mb: float
-    pipeline: PipelineMetadata
-    # container: dict[str, Any] # Not meaningful
-
-
-class CommericalInvoiceResult(TypedDict):
-    runtime_metadata: RuntimeMetadata
-    profile: CommericalInvoiceProfile
-    dataset: list[dict[Literal["no", "production_description", "unit", "quantity", "unit_price", "amount"], str | int | float]]
+# Internal
+from einvoice_lens._constant import DEFAULT_MAPPING_CHARACTERS
+import einvoice_lens.model as model
+from einvoice_lens._util import calculate_checksum_crc32c_on
 
 
 def _is_main_header(element: list[str]) -> bool:
@@ -128,7 +41,7 @@ def _is_list_contain_empty(element: list[str]) -> bool:
 
 def _is_group_total_amount_number(element: list[str]) -> bool:
     "Handle ['Tổng tiền thanh toán(Total amount): 20.752.000', None, None, None, None, None]"
-    if element[0].startswith("Tổng tiền thanh toán") or "Total amount" in element[0]:
+    if any([x in element[0] for x in ("Tổng tiền thanh toán", "Total amount", "Cộng tiền hàng")]):
         return True
     return False
 
@@ -140,7 +53,41 @@ def _is_group_total_amount_in_words(element: list[str]) -> bool:
     return False
 
 
-def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
+def _pipeline_text_transform(*, string: str | None = None) -> str:
+    """Internal pipeline that handle the transformation on document (Pre-built pipeline)
+
+    Included:
+    - Apply mapping with str.translate
+    - Normalize Unicode (NFC recommended)
+    - Collapse multi-spaces
+    - Strip weird line breaks
+    - Remove leftover control characters
+    """
+    if not string:
+        return ""
+
+    # Translate
+    string = string.translate(str.maketrans(DEFAULT_MAPPING_CHARACTERS))
+
+    # Normalize (fix decomposed characters)
+    string = unicodedata.normalize("NFC", string)
+
+    # Remove control characters except tab/newline
+    string = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", string)
+
+    # Collapse multiple spaces
+    string = re.sub(r"[ ]{2,}", " ", string)
+
+    # Collapse weird linebreak sequences
+    string = re.sub(r"\s+\n", "\n", string).rstrip()
+
+    # Others
+    string = string.replace("\xad", "")
+
+    return string
+
+
+def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
     """Parse commerical invoice from PDF file into structured output
 
     Args
@@ -164,10 +111,6 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
     if not path.endswith(".pdf"):
         raise ValueError(f"Invaid extension of pdf. Got {path.split('.')[1]} file type")
 
-    # Local use
-    def _pipeline_text_transform(*, string: str) -> str:
-        return strx.str_normalize(string=string.encode("utf-8").decode("utf-8"), form="NFKC", strip=True).replace("\xad", "")
-
     # Checkpoint
     _start = datetime.now(tz=timezoneUTC)
 
@@ -178,13 +121,13 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
     # Get
     document = pdfplumber.open(path, unicode_norm="NFKC")
 
-    # Extract: Document Attribute
-    attribute = DocumentAttribute(document_type="UNKNOWN", tax_agent_code=None, digital_signature=None)
-    seller = SellerInformation()
-    buyer = BuyerInformation(name=None, company=None, tax_code=None, tel=None)
-    invoice_partner = InvoicePartnerInformation(endpoint_search_invoice=None, tax_code=None)
+    # Models
+    attribute = model.DocumentAttribute(document_type="UNKNOWN", tax_agent_code=None, digital_signature=None)
+    seller = model.SellerInformation()
+    buyer = model.BuyerInformation(name=None, company=None, tax_code=None, tel=None)
+    invoice_partner = model.InvoicePartnerInformation(endpoint_search_invoice=None, tax_code=None)
 
-    # Hold content from profile off document
+    # Build
     profile_content = {}
 
     # Component
@@ -200,36 +143,41 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
     # Loop
     first_page_bucket_line_content = first_page_content.split("\n")
     on_scrool_over_type: str = "" # One of seller, buyer for search role play
-    for on_ind, on_text in enumerate(first_page_bucket_line_content, start=0):
+    for on_ind, on_line in enumerate(first_page_bucket_line_content, start=0):
 
-        # Normalized
-        nor_on_text = _pipeline_text_transform(string=on_text)
-        nor_on_next_text = None
-
+        on_next_line = None
         try:
-            nor_on_next_text = _pipeline_text_transform(string=first_page_bucket_line_content[on_ind + 1])
+            on_next_line = first_page_bucket_line_content[on_ind + 1]
         except IndexError:
             pass
 
         # Define
-        if any([unicodedata.normalize("NFKC", _otext) in nor_on_text.lower() for _otext in ("sales invoice", "hóa đơn bán hàng", "đơn bán hàng")]):
+        if any([
+            unicodedata.normalize("NFKC", _otext) in on_line.lower()
+            for _otext in (
+                "sales invoice",
+                "hóa đơn bán hàng",
+                "đơn bán hàng",
+                "hóa đơn giá trị gia tăng",
+            )
+        ]):
             attribute["document_type"] = "SALES_INVOICE"
 
         # Detect issue date. Example: Ngày (date) 25 tháng (month) 09 năm (year) 2025
         issue_date = None
         if all([
             any([
-                unicodedata.normalize("NFKC", "date") in nor_on_text,
-                unicodedata.normalize("NFKC", "day") in nor_on_text
+                unicodedata.normalize("NFKC", "date") in on_line,
+                unicodedata.normalize("NFKC", "day") in on_line
             ]),
-            unicodedata.normalize("NFKC", "month") in nor_on_text,
-            unicodedata.normalize("NFKC", "year") in nor_on_text
+            unicodedata.normalize("NFKC", "month") in on_line,
+            unicodedata.normalize("NFKC", "year") in on_line
         ]):
 
             # Extract
-            e_day = re.search(r"(?<=date\))\s?\d{1,}+", nor_on_text, re.A) or re.search(r"(?<=day\))\s?\d{1,}+", nor_on_text, re.A)
-            e_month = re.search(r"(?<=month\))\s?\d{1,}+", nor_on_text, re.A)
-            e_year = re.search(r"(?<=year\))\s?\d{1,}+", nor_on_text, re.A)
+            e_day = re.search(r"(?<=date\))\s?\d{1,}+", on_line, re.A) or re.search(r"(?<=day\))\s?\d{1,}+", on_line, re.A)
+            e_month = re.search(r"(?<=month\))\s?\d{1,}+", on_line, re.A)
+            e_year = re.search(r"(?<=year\))\s?\d{1,}+", on_line, re.A)
             at_day = int(e_day.group(0)) if e_day is not None else None
             at_month = int(e_month.group(0)) if e_month is not None else None
             at_year = int(e_year.group(0)) if e_year is not None else None
@@ -250,9 +198,9 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
             attribute["issue_date"] = issue_date
 
         # Parse mapping value
-        if ":" in nor_on_text:
-            key, val = nor_on_text.split(":", maxsplit=1)
-            val = unicodedata.normalize("NFKD", val.strip())
+        if ":" in on_line:
+            key, val = on_line.split(":", maxsplit=1)
+            val = unicodedata.normalize("NFKC", val.strip())
 
             if "Serial No" in key:
                 attribute["serial_no"] = val
@@ -270,10 +218,10 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
             profile_content[key] = val
 
         # Handle the invoice partner
-        if nor_on_text.lower().startswith(unicodedata.normalize("NFKC", "Tra cứu hóa đơn").lower()):
+        if on_line.lower().startswith(unicodedata.normalize("NFKC", "Tra cứu hóa đơn").lower()):
 
             # Find on next index too
-            search_invoice_partner_block = " ".join([nor_on_text, nor_on_next_text or ""])
+            search_invoice_partner_block = " ".join([on_line, on_next_line or ""])
 
             # Then chain by vietnamese before go to search zone
             search_invoice_partner_block = (
@@ -313,68 +261,68 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
         # Define scroll point
         # Detect block of buyer | seller (related to same attribute like name, address, account_number, ...)
         # then search words related until change scrolling point
-        if "seller" in nor_on_text.lower():
+        if "seller" in on_line.lower():
             on_scrool_over_type = "seller"
-        elif "buyer" in nor_on_text.lower():
+        elif "buyer" in on_line.lower():
             on_scrool_over_type = "buyer"
 
         if on_scrool_over_type == "seller":
 
             _, s_val = None, None
-            if len(nor_on_text.split(":")) > 1:
-                _, s_val = nor_on_text.split(":", maxsplit=1)
-                s_val = unicodedata.normalize("NFC", s_val.strip())
+            if len(on_line.split(":")) > 1:
+                _, s_val = on_line.split(":", maxsplit=1)
+                s_val = unicodedata.normalize("NFKC", s_val.strip())
 
-            if "seller" in nor_on_text.lower():
+            if "seller" in on_line.lower():
                 seller["name"] = s_val
 
-            elif "tax code" in nor_on_text.lower():
+            elif "tax code" in on_line.lower():
                 seller["tax_code"] = s_val
 
-            elif "address" in nor_on_text.lower():
+            elif "address" in on_line.lower():
                 seller["address"] = s_val
 
-            elif "tel" in nor_on_text.lower(): # TODO: Multiple in 1 line
+            elif "tel" in on_line.lower(): # TODO: Multiple in 1 line
                 seller["tel"] = s_val
 
-            elif "email" in nor_on_text.lower(): # TODO: Multiple in 1 line
+            elif "email" in on_line.lower(): # TODO: Multiple in 1 line
                 seller["email"] = s_val
 
-            elif "fax" in nor_on_text.lower(): # TODO: Multiple in 1 line
+            elif "fax" in on_line.lower(): # TODO: Multiple in 1 line
                 seller["fax"] = s_val
 
-            elif "a/c no" in nor_on_text.lower():
+            elif "a/c no" in on_line.lower():
                 seller["account_number"] = s_val
 
         if on_scrool_over_type == "buyer":
 
             _, b_val = None, None
-            if len(nor_on_text.split(":")) > 1:
-                _, b_val = nor_on_text.split(":", maxsplit=1)
-                b_val = unicodedata.normalize("NFC", b_val.strip())
+            if len(on_line.split(":")) > 1:
+                _, b_val = on_line.split(":", maxsplit=1)
+                b_val = unicodedata.normalize("NFKC", b_val.strip())
 
-            if "buyer" in nor_on_text.lower():
+            if "buyer" in on_line.lower():
                 buyer["name"] = b_val
 
-            if "company's name" in nor_on_text.lower():
+            if "company's name" in on_line.lower():
                 buyer["company"] = b_val
 
-            elif "tax code" in nor_on_text.lower():
+            elif "tax code" in on_line.lower():
                 buyer["tax_code"] = b_val
 
-            elif "address" in nor_on_text.lower():
+            elif "address" in on_line.lower():
                 buyer["address"] = b_val
 
-            elif "tel" in nor_on_text.lower(): # TODO: Multiple in 1 line
+            elif "tel" in on_line.lower(): # TODO: Multiple in 1 line
                 buyer["tel"] = b_val
 
-            elif "email" in nor_on_text.lower(): # TODO: Multiple in 1 line
+            elif "email" in on_line.lower(): # TODO: Multiple in 1 line
                 buyer["email"] = b_val
 
-            elif "fax" in nor_on_text.lower(): # TODO: Multiple in 1 line
+            elif "fax" in on_line.lower(): # TODO: Multiple in 1 line
                 buyer["fax"] = b_val
 
-            elif "a/c no" in nor_on_text.lower():
+            elif "a/c no" in on_line.lower():
                 buyer["account_number"] = b_val
 
     # TODO: Current can't not process to find the digital signature. It's likely like bounding box
@@ -386,7 +334,8 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
     sub_header: list[str] = []
     total_amount_figure: list[str] = []
     total_amount_in_words: list[str] = []
-    table_elements = []
+    table_elements: list[dict] = []
+    _tray_first_element = []
     errors = []
     on_table_length: int = None
     for _, element in enumerate(document.pages, start=0):
@@ -408,16 +357,17 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
                 if _is_list_contain_empty(element=record):
                     continue
 
-                # Normalization
                 noralization_record = [
-                    _pipeline_text_transform(string=text).replace("\n", " ")
-                    if text is not None else None
-                    for text in record
+                    _pipeline_text_transform(string=on_component).replace("\n", " ")
+                    if on_component is not None else None
+                    for on_component in record
                 ]
 
-                # Check duplication
-                if noralization_record in table_elements:
-                    pass
+                # Check duplication on first element (mostly in no. column)
+                if noralization_record[0] in _tray_first_element:
+                    continue
+                else:
+                    _tray_first_element.append(noralization_record[0])
 
                 # For the search for (a) main header and (b) subheader
                 # This only exist 1 so if they are exists, ignore the validate the next element
@@ -446,35 +396,28 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
                     errors.append(noralization_record)
                     continue
 
-                # Set
+                # Ignore case not start with ordered number
+                if not str(noralization_record[0]).isdigit():
+                    continue
+
+                # Build
+                noralization_record = {
+                    "no": int(noralization_record[0]),
+                    "product_description": str(noralization_record[1]).replace("\n", " ") if noralization_record[1] is not None else None,
+                    "unit": noralization_record[2].lower(),
+                    "quantity": strx.str_to_number(string=noralization_record[3], radix=",", delimiter="."),
+                    "unit_price": strx.str_to_number(string=noralization_record[4], radix=",", delimiter="."),
+                    "amount": strx.str_to_number(string=noralization_record[5], radix=",", delimiter="."),
+                }
                 table_elements.append(noralization_record)
 
-    # Parse
-    dataset = pl.DataFrame(
-        table_elements,
-        schema=["no", "product_description", "unit", "quantity", "unit_price", "amount"],
-        orient="row",
-        strict=False
-    )
-
-    # Transform
-    dataset = (
-        dataset
-        .with_columns([
-            pl.col("no").cast(pl.Int64, strict=True).name.keep(),
-            pl.col("product_description").str.replace_all("\n", " ").name.keep(),
-            pl.col("unit").cast(pl.String).str.to_titlecase().name.keep(),
-            pl.col("quantity").cast(pl.Int64, strict=True).name.keep(),
-            pl.col(["unit_price", "amount"]).str.replace_all(".", "", literal=True).cast(pl.Float64).name.keep(),
-        ])
-        .unique(subset="no")
-        .sort(by="no", descending=False)
-    )
+    # Last sort
+    _ = table_elements.sort(key=lambda x: x["no"])
 
     # Checkpoint
     _end = datetime.now(tz=timezoneUTC)
 
-    return CommericalInvoiceResult(
+    return model.CommericalInvoiceResult(
         runtime_metadata={
             "source_path": pathlib.Path(path).as_posix(),
             "checksum_crc32c": file_checksum,
@@ -493,5 +436,5 @@ def parse_commerical_invoice(path: str) -> CommericalInvoiceResult:
             "buyer": buyer,
             "invoice_partner": invoice_partner,
         },
-        dataset=dataset.to_dicts()
+        dataset=table_elements
     )

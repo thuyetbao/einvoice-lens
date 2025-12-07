@@ -4,10 +4,6 @@
 
 - [ ] Added metadata for `Total Amount` and `In Words`
 
-- [ ] Issue trouble on encoded
-
-- [ ] CLI params
-
 - [ ] Add support for `Python 3.14`. See: <https://github.com/thuyetbao/einvoice-lens/actions/runs/18183864131/job/51764582139>
 
 ```bash
@@ -18,3 +14,5 @@ Installed versions
 ```
 
 - [ ] Add extraction for <https://www.meinvoice.vn/tin-tuc/12961/mau-so-hoa-don-va-ky-hieu-hoa-don-dien-tu/>
+
+- [ ] Using padding and regex on file metadata related to stick line when parse invoice

@@ -53,12 +53,19 @@ def _is_group_total_amount_in_words(element: list[str]) -> bool:
     return False
 
 
+def any_match(string: str, *args: str) -> bool:
+    for arg in args:
+        if string == arg:
+            return True
+    return False
+
+
 def _pipeline_text_transform(*, string: str | None = None) -> str:
     """Internal pipeline that handle the transformation on document (Pre-built pipeline)
 
     Included:
     - Apply mapping with str.translate
-    - Normalize Unicode (NFC recommended)
+    - Normalize Unicode
     - Collapse multi-spaces
     - Strip weird line breaks
     - Remove leftover control characters
@@ -69,8 +76,8 @@ def _pipeline_text_transform(*, string: str | None = None) -> str:
     # Translate
     string = string.translate(str.maketrans(DEFAULT_MAPPING_CHARACTERS))
 
-    # Normalize (fix decomposed characters)
-    string = unicodedata.normalize("NFC", string)
+    # Normalize
+    string = unicodedata.normalize("NFKD", string)
 
     # Remove control characters except tab/newline
     string = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", string)
@@ -122,10 +129,33 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
     document = pdfplumber.open(path, unicode_norm="NFKC")
 
     # Models
-    attribute = model.DocumentAttribute(document_type="UNKNOWN", tax_agent_code=None, digital_signature=None)
-    seller = model.SellerInformation()
-    buyer = model.BuyerInformation(name=None, company=None, tax_code=None, tel=None)
-    invoice_partner = model.InvoicePartnerInformation(endpoint_search_invoice=None, tax_code=None)
+    attribute = model.DocumentAttribute(
+        document_type="UNKNOWN",
+        tax_agent_code=None,
+        digital_signature=None,
+        serial_no=None,
+        invoice_number=None,
+        issue_date=None
+    )
+    seller = model.SellerInformation(
+        name=None,
+        tax_code=None,
+        address=None,
+        tel=None,
+        email=None,
+        fax=None,
+        account_number=None
+    )
+    buyer = model.BuyerInformation(
+        name=None,
+        company=None,
+        tax_code=None,
+        tel=None
+    )
+    invoice_partner = model.InvoicePartnerInformation(
+        endpoint_search_invoice=None,
+        tax_code=None
+    )
 
     # Build
     profile_content = {}
@@ -135,10 +165,16 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
     #   and it's repeatable for format (same with others page)
     # So that we can regex on the first page line by line
     first_page_content = _pipeline_text_transform(string=document.pages[0].extract_text())
+    last_page_content = _pipeline_text_transform(string=document.pages[-1].extract_text())
 
-    # Format is somehow can't not defined by rule
-    if "electronic invoice display" in first_page_content.lower():
+    if any([x in first_page_content.lower() for x in ("electronic invoice display")]):
         attribute["display_format"] = "ELECTRONIC_INVOICE_DISPLAY"
+
+    if any([x in first_page_content.lower() for x in ("sales invoice", "hóa đơn bán hàng", "đơn bán hàng")]):
+        attribute["document_type"] = "SALES_INVOICE"
+
+    if any([x in first_page_content.lower() for x in ("hóa đơn giá trị gia tăng")]):
+        attribute["document_type"] = "VALUE_ADDED_TAX_INVOICE"
 
     # Loop
     first_page_bucket_line_content = first_page_content.split("\n")
@@ -151,27 +187,12 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
         except IndexError:
             pass
 
-        # Define
-        if any([
-            unicodedata.normalize("NFKC", _otext) in on_line.lower()
-            for _otext in (
-                "sales invoice",
-                "hóa đơn bán hàng",
-                "đơn bán hàng",
-                "hóa đơn giá trị gia tăng",
-            )
-        ]):
-            attribute["document_type"] = "SALES_INVOICE"
-
         # Detect issue date. Example: Ngày (date) 25 tháng (month) 09 năm (year) 2025
         issue_date = None
         if all([
-            any([
-                unicodedata.normalize("NFKC", "date") in on_line,
-                unicodedata.normalize("NFKC", "day") in on_line
-            ]),
-            unicodedata.normalize("NFKC", "month") in on_line,
-            unicodedata.normalize("NFKC", "year") in on_line
+            any_match(on_line.lower(), "date", "day", "ngày"),
+            any_match(on_line.lower(), "month", "tháng"),
+            any_match(on_line.lower(), "year", "năm"),
         ]):
 
             # Extract
@@ -200,63 +221,24 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
         # Parse mapping value
         if ":" in on_line:
             key, val = on_line.split(":", maxsplit=1)
-            val = unicodedata.normalize("NFKC", val.strip())
+            val = val.strip()
 
-            if "Serial No" in key:
+            if any_match(key.lower(), "serial no", "ký hiệu"):
                 attribute["serial_no"] = val
 
-            elif "No." in key:
+            elif any_match(key.lower(), "no.", "số"):
                 attribute["invoice_number"] = val
 
-            elif "No." in key:
-                attribute["document_type"] = val
-
-            elif any([_imap in key.lower() for _imap in ("mã của cơ quan thuế", "mã cơ quan thuế")]):
+            elif any_match(key.lower(), *(
+                "mã của cơ quan thuế",
+                "mã cơ quan thuế",
+                "mã của cqt",
+                "mã cqt"
+            )):
                 attribute["tax_agent_code"] = val
 
             # Handlers
             profile_content[key] = val
-
-        # Handle the invoice partner
-        if on_line.lower().startswith(unicodedata.normalize("NFKC", "Tra cứu hóa đơn").lower()):
-
-            # Find on next index too
-            search_invoice_partner_block = " ".join([on_line, on_next_line or ""])
-
-            # Then chain by vietnamese before go to search zone
-            search_invoice_partner_block = (
-                search_invoice_partner_block.lower()
-                .replace("mã tra cứu", "search_keyword_id")
-                .replace("mã số thuế", "tax_code")
-                .replace("mst", "tax_code")
-            )
-
-            # Find
-            search_keyword_id_result = re.search(
-                r"(?<=search_keyword_id\:)\s?(?P<keyword_id>\w+)",
-                search_invoice_partner_block,
-                re.I
-            )
-            if search_keyword_id_result is not None:
-                invoice_partner["search_keyword_id"] = search_keyword_id_result.group("keyword_id").upper()
-
-            # Find
-            endpoint_result = re.search(
-                r"\bhttps?://(?:[\w\-]+\.)+[\w\-]+\b",
-                search_invoice_partner_block,
-                re.I
-            )
-            if endpoint_result is not None:
-                invoice_partner["endpoint_search_invoice"] = endpoint_result.group().strip()
-
-            # Find
-            tax_code_result = re.search(
-                r"(?<=tax_code\:)\s?(?P<tax_code>\b\w+)",
-                search_invoice_partner_block,
-                re.I
-            )
-            if tax_code_result is not None:
-                invoice_partner["tax_code"] = tax_code_result.group("tax_code").strip()
 
         # Define scroll point
         # Detect block of buyer | seller (related to same attribute like name, address, account_number, ...)
@@ -325,6 +307,52 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
             elif "a/c no" in on_line.lower():
                 buyer["account_number"] = b_val
 
+    # For last page extraction
+    for on_ind, on_line in enumerate(last_page_content.split("\n"), start=0):
+
+        if any([
+            on_line.lower().startswith("Tra cứu hóa đơn".lower()),
+            on_line.lower().startswith("Tra cứu tại website".lower()),
+        ]):
+
+            # Find on next index too
+            search_invoice_partner_block = " ".join([on_line, on_next_line or ""])
+
+            # Then chain by vietnamese before go to search zone
+            search_invoice_partner_block = (
+                search_invoice_partner_block.lower()
+                .replace("mã tra cứu", "search_keyword_id")
+                .replace("mã số thuế", "tax_code")
+                .replace("mst", "tax_code")
+            )
+
+            # Find
+            search_keyword_id_result = re.search(
+                r"(?<=search_keyword_id\:)\s?(?P<keyword_id>\w+)",
+                search_invoice_partner_block,
+                re.I
+            )
+            if search_keyword_id_result is not None:
+                invoice_partner["search_keyword_id"] = search_keyword_id_result.group("keyword_id").upper()
+
+            # Find
+            endpoint_result = re.search(
+                r"\bhttps?://(?:[\w\-]+\.)+[\w\-]+\b",
+                search_invoice_partner_block,
+                re.I
+            )
+            if endpoint_result is not None:
+                invoice_partner["endpoint_search_invoice"] = endpoint_result.group().strip()
+
+            # Find
+            tax_code_result = re.search(
+                r"(?<=tax_code\:)\s?(?P<tax_code>\b\w+)",
+                search_invoice_partner_block,
+                re.I
+            )
+            if tax_code_result is not None:
+                invoice_partner["tax_code"] = tax_code_result.group("tax_code").strip()
+
     # TODO: Current can't not process to find the digital signature. It's likely like bounding box
     # By search like: document.pages[0].objects["image"][0]["stream"].get_rawdata()
     # attribute.digital_signature = None
@@ -352,22 +380,20 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
 
         # Loop
         for table in e_tables:
+
+            # Loop
             for record in table:
 
+                # Empty record
                 if _is_list_contain_empty(element=record):
                     continue
 
+                # Build
                 noralization_record = [
                     _pipeline_text_transform(string=on_component).replace("\n", " ")
                     if on_component is not None else None
                     for on_component in record
                 ]
-
-                # Check duplication on first element (mostly in no. column)
-                if noralization_record[0] in _tray_first_element:
-                    continue
-                else:
-                    _tray_first_element.append(noralization_record[0])
 
                 # For the search for (a) main header and (b) subheader
                 # This only exist 1 so if they are exists, ignore the validate the next element
@@ -400,14 +426,20 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
                 if not str(noralization_record[0]).isdigit():
                     continue
 
+                # Check duplicate on first element (first element is tray number on no. column)
+                if record[0] in _tray_first_element:
+                    continue
+                else:
+                    _tray_first_element.append(record[0])
+
                 # Build
                 noralization_record = {
                     "no": int(noralization_record[0]),
                     "product_description": str(noralization_record[1]).replace("\n", " ") if noralization_record[1] is not None else None,
                     "unit": noralization_record[2].lower(),
-                    "quantity": strx.str_to_number(string=noralization_record[3], radix=",", delimiter="."),
-                    "unit_price": strx.str_to_number(string=noralization_record[4], radix=",", delimiter="."),
-                    "amount": strx.str_to_number(string=noralization_record[5], radix=",", delimiter="."),
+                    "quantity": int(strx.str_to_number(string=noralization_record[3], radix=",", delimiter=".")),
+                    "unit_price": float(strx.str_to_number(string=noralization_record[4], radix=",", delimiter=".")),
+                    "amount": float(strx.str_to_number(string=noralization_record[5], radix=",", delimiter=".")),
                 }
                 table_elements.append(noralization_record)
 
@@ -428,7 +460,6 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
                 "end": _end,
                 "processing_in_seconds": (_end - _start).total_seconds(),
             },
-            # "container": document.to_dict(),
         },
         profile={
             "attribute": attribute,

@@ -29,9 +29,9 @@ class DocumentAttribute(TypedDict):
 
 
 class SellerInformation(TypedDict):
-    name: str
-    tax_code: str
-    address: str
+    name: str | None
+    tax_code: str | None
+    address: str | None
     tel: str | None
     email: str | None
     fax: str | None
@@ -77,7 +77,6 @@ class RuntimeMetadata(TypedDict):
     total_pages: int
     file_size_mb: float
     pipeline: PipelineMetadata
-    # container: dict[str, Any] # Not meaningful
 
 
 class CommericalInvoiceResult(TypedDict):

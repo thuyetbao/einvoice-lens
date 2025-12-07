@@ -1,10 +1,12 @@
 # Changelog
 
-## v0.3.1 (2025-12-04)
+## v0.3.2 (2025-12-04)
 
 - [x] (fix) Updated pipelines transformation on text string and configuration form in normalize
 
 - [x] (deps) Removed `polars` as the dependencies
+
+- [x] (cli) Added parameter `output` to cli that write json to file
 
 ## v0.2.3 (2025-11-30)
 

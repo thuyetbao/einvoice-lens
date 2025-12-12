@@ -19,7 +19,7 @@ class DigitalSignature(TypedDict):
 
 
 class DocumentAttribute(TypedDict):
-    document_type: Literal["SALES_INVOICE", "UNKNOWN"] | None
+    document_type: Literal["SALES_INVOICE", "VALUE_ADDED_TAX_INVOICE"] | None
     display_format: str | None
     issue_date: date | None
     tax_agent_code: str | None

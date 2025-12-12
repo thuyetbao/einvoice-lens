@@ -1,9 +1,5 @@
 # **TODO**
 
-- [ ] Add grouth truth for define the dataset is satified (total rows, total amount)
-
-- [ ] Added metadata for `Total Amount` and `In Words`
-
 - [ ] Add support for `Python 3.14`. See: <https://github.com/thuyetbao/einvoice-lens/actions/runs/18183864131/job/51764582139>
 
 ```bash

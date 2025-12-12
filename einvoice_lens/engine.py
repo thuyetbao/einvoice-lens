@@ -17,14 +17,14 @@ import einvoice_lens.model as model
 from einvoice_lens._util import calculate_checksum_crc32c_on
 
 
-def _is_main_header(element: list[str]) -> bool:
+def is_main_header(element: list[str]) -> bool:
     "Handle ['STT\n(No.)', 'Tên hàng hóa, dịch vụ\n(Description)', 'Đơn vị tính\n(Unit)', 'Số lượng\n(Quantity)', 'Đơn giá\n(Unit price)', 'Thành tiền\n(Amount)']"
     if element[0].lower().startswith("stt") or "No." in element[0]:
         return True
     return False
 
 
-def _is_sub_header(element: list[str]) -> bool:
+def is_sub_header(element: list[str]) -> bool:
     "Handle ['(1)', '(2)', '(3)', '(4)', '(5)', '(6) = (4) x (5)']"
     if element[0] == "(1)":
         if element[1] == "(2)":
@@ -32,21 +32,21 @@ def _is_sub_header(element: list[str]) -> bool:
     return False
 
 
-def _is_list_contain_empty(element: list[str]) -> bool:
+def is_list_contain_empty(element: list[str]) -> bool:
     "Handle ['', '', '', '', '', '']"
     if all([x == "" for x in element]):
         return True
     return False
 
 
-def _is_group_total_amount_number(element: list[str]) -> bool:
+def is_group_total_amount_number(element: list[str]) -> bool:
     "Handle ['Tổng tiền thanh toán(Total amount): 20.752.000', None, None, None, None, None]"
     if any([x in element[0] for x in ("Tổng tiền thanh toán", "Total amount", "Cộng tiền hàng")]):
         return True
     return False
 
 
-def _is_group_total_amount_in_words(element: list[str]) -> bool:
+def is_group_total_amount_in_words(element: list[str]) -> bool:
     "Handle ['Số tiền viết bằng chữ(In words):Hai mươi triệu bảy trăm năm mươi hai nghìn đồng', None, None, None, None, None]"
     if element[0].startswith("Số tiền viết bằng chữ") or "In words" in element[0]:
         return True
@@ -60,7 +60,115 @@ def any_match(string: str, *args: str) -> bool:
     return False
 
 
-def _pipeline_text_transform(*, string: str | None = None) -> str:
+# Mapping attributes
+MAPPING_ATTRIBUTE_KEY: dict[str, dict[str, list[str]]] = {
+    "TAX_AGENT_CODE": {"type": "composite", "search_by": {"english": ["Tax agent code"], "vietnamese": ["Mã CQT", "Mã cơ quan thuế", "Mã của cơ quan thuế"]}},
+    "SERIAL_NO": {"type": "composite", "search_by": {"english": ["Serial No"], "vietnamese": ["Ký hiệu"]}},
+    "INVOICE_NUMBER": {"type": "composite", "search_by": {"english": ["No"], "vietnamese": ["Số", "Số hiệu"]}},
+    "TAX_CODE": {"type": "composite", "search_by": {"english": ["Tax code"], "vietnamese": ["Mã số thuế", "MST"]}},
+    "COMPANY_NAME": {"type": "composite", "search_by": {"english": ["company's name"], "vietnamese": ["Tên đơn vị", "Tên doanh nghiệp", "Tên hộ kinh doanh"]}},
+    "ADDRESS": {"type": "composite", "search_by": {"english": ["Address"], "vietnamese": ["Địa chỉ"]}},
+    "PHONE": {"type": "composite", "search_by": {"english": ["Phone", "Tel"], "vietnamese": ["Điện thoại", "Số điện thoại"]}},
+    "WEBSITE": {"type": "composite", "search_by": {"english": ["Website"], "vietnamese": ["Trang thông tin", "Trang web"]}},
+    "EMAIL": {"type": "composite", "search_by": {"english": ["Email"], "vietnamese": ["Email"]}},
+    "FAX": {"type": "composite", "search_by": {"english": ["Fax"], "vietnamese": ["Fax"]}},
+    "PAYMENT_ACCOUNT": {"type": "composite", "search_by": {"english": ["Account number", "a/c no", "Account No"], "vietnamese": ["Số tài khoản", "Tài khoản thanh toán"]}},
+    "PAYMENT_METHOD": {"type": "composite", "search_by": {"english": ["Payment method"], "vietnamese": ["Phương thức thanh toán", "Hình thức thanh toán"]}},
+    "PAYMENT_CURRENCY": {"type": "composite", "search_by": {"english": ["Payment currency"], "vietnamese": ["Đồng tiền thanh toán", "Tiền tệ thanh toán"]}},
+    "TOTAL_AMOUNT": {"type": "composite", "search_by": {"english": ["Total amount"], "vietnamese": ["Cộng tiền hàng"]}}, # NO VAT
+    "TOTAL_AMOUNT_AFTER_VAT": {"type": "composite", "search_by": {"english": ["Total amount after VAT"], "vietnamese": ["Tổng tiền thanh toán", "Thành tiền (sau thuế)"]}}, # Include VAT
+    "TOTAL_AMOUNT_IN_WORDS": {"type": "composite", "search_by": {"english": ["Total amount in words", "In words"], "vietnamese": ["Số tiền viết bằng chữ"]}},
+    "VAT_RATE": {"type": "composite", "search_by": {"english": ["VAT rate", "VAT (%)"], "vietnamese": ["Thuế suất giá trị gia tăng", "Thuế suất (%)", "Thuế suất GTGT"]}},
+    "VAT_AMOUNT": {"type": "composite", "search_by": {"english": ["VAT amount", "VAT (VND)"], "vietnamese": ["Tiền thuế GTGT", "Tiền thuế VAT", "Giá trị thuế GTGT"]}},
+    "SEARCH_ENDPOINT": {"type": "invoice_partner", "search_by": {"english": ["Reference at"], "vietnamese": ["Tra cứu tại website"]}},
+    "SEARCH_KEYWORD_ID": {"type": "invoice_partner", "search_by": {"english": ["Reference ID"], "vietnamese": ["Mã tìm kiếm", "Mã tra cứu"]}},
+    "SEARCH_PARTNER": {"type": "invoice_partner", "search_by": {"english": ["Distributed by"], "vietnamese": ["Phát hành bởi"]}},
+}
+
+
+def build_boundary_regex(keyword: str, included_colon: bool = False) -> re.Pattern:
+    """Build a Unicode-safe regex pattern to match a keyword as a standalone phrase.
+
+    The pattern matches the keyword only when it is **not part of a larger word**,
+    supporting letters from any language (Unicode-aware). Multi-word keywords
+    with spaces are handled, and an optional colon immediately following the
+    keyword can be enforced.
+
+    Parameters
+    ----------
+    keyword (str): The keyword or phrase to match.
+    included_colon (bool): If True, only match the keyword when followed by a colon. Defaults to False.
+
+    Returns
+    -------
+    re.Pattern: A compiled regex pattern ready for searching.
+
+    Usage
+    -----
+    >>> import re
+    >>> regex = build_boundary_regex("Mã cơ quan thuế", included_colon=True)
+    >>> re.search(regex, "Mã cơ quan thuế: ABCDXYZGHIKLMNOPQRSTUVWXYZ")
+    <re.Match object; span=(0, 15), match='Mã cơ quan thuế'>
+    """
+
+    # Escape but keep spaces literal
+    kw = re.escape(keyword)
+
+    # Negative boundary: before keyword: either start or non-word
+    # After keyword: either end, non-word, or a colon if included_colon=True
+    after = r"(?=\s*:)" if included_colon else r""
+    pattern = rf"(?<!\w){kw}{after}(?!\w)"
+
+    return re.compile(pattern, flags=re.IGNORECASE | re.UNICODE)
+
+
+# def is_company_name(string: str) -> bool:
+#     pattern = build_boundary_regex(keyword="Công ty TNHH", included_colon=False)
+#     if re.search(pattern, string):
+#         return True
+#     return False
+
+
+class SearchAttribute:
+    def __init__(self, *, key: str, mapping_english: list[str], mapping_vietnamese: list[str]):
+        """Search attribute with declarative mapping
+
+        Args
+        ----
+        key: str: Key of the attribute
+        mapping_english: list[str]: List of English keywords to search for
+        mapping_vietnamese: list[str]: List of Vietnamese keywords to search for
+
+        Usage
+        -----
+        >>> s_attr = SearchAttribute(key="SERIAL_NO", mapping_english=["Serial No"], mapping_vietnamese=["Ký hiệu"])
+        >>> s_attr.mask_attribute("Ký hiệu:1C25TKT", with_prefix_stop="STOP")
+        '[STOP][SERIAL_NO]:1C25TKT'
+        >>> s_attr.mask_attribute("Ký hiệu:1C25TKT[STOP]", with_prefix_stop="STOP")
+        '[STOP][SERIAL_NO]:1C25TKT'
+        """
+        self.key = key
+        # Build mapping list
+        # Combine from (a) English and (b) Vietnamese and (c) Product between them
+        component = mapping_english + mapping_vietnamese
+        for k_en, k_vi in zip(mapping_english, mapping_vietnamese):
+            combined = [f"{k_en} ({k_vi})", f"{k_vi} ({k_en})"]
+            component.extend(combined)
+        self.mapping = sorted(component, key=len, reverse=True)
+
+    def mask_attribute(self, string: str, with_prefix_stop: str | None = None, included_colon_seperated: bool = True) -> str:
+        replacement = f"[{self.key.upper()}]" if with_prefix_stop is None else f"[{with_prefix_stop.upper()}][{self.key.upper()}]"
+        reform_string = unicodedata.normalize("NFC", string)
+        for keyword in self.mapping:
+            on_search_keyword = unicodedata.normalize("NFKC", keyword)
+            regex = build_boundary_regex(keyword=on_search_keyword, included_colon=included_colon_seperated)
+            ater_replace_string = regex.sub(replacement, reform_string)
+            if ater_replace_string != reform_string:
+                return ater_replace_string
+        return string
+
+
+def _pipeline_text_transform(*, string: str | None = None, mapping: dict[str, str] | None = None) -> str:
     """Internal pipeline that handle the transformation on document (Pre-built pipeline)
 
     Included:
@@ -74,7 +182,8 @@ def _pipeline_text_transform(*, string: str | None = None) -> str:
         return ""
 
     # Translate
-    string = string.translate(str.maketrans(DEFAULT_MAPPING_CHARACTERS))
+    if isinstance(mapping, dict):
+        string = string.translate(str.maketrans(mapping))
 
     # Normalize
     string = unicodedata.normalize("NFKD", string)
@@ -82,11 +191,11 @@ def _pipeline_text_transform(*, string: str | None = None) -> str:
     # Remove control characters except tab/newline
     string = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", string)
 
-    # Collapse multiple spaces
-    string = re.sub(r"[ ]{2,}", " ", string)
-
     # Collapse weird linebreak sequences
-    string = re.sub(r"\s+\n", "\n", string).rstrip()
+    string = re.sub(r"\s{2,}\n", "\n", string).rstrip()
+
+    # Collapse multiple spaces
+    string = re.sub(r"\s{2,}", " ", string)
 
     # Others
     string = string.replace("\xad", "")
@@ -116,21 +225,14 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
         raise ValueError(f"Not exist the document on path={path!r}")
 
     if not path.endswith(".pdf"):
-        raise ValueError(f"Invaid extension of pdf. Got {path.split('.')[1]} file type")
+        raise ValueError(f"Invaid extension of pdf. Got {path.split('.')[-1]} file type")
 
     # Checkpoint
     _start = datetime.now(tz=timezoneUTC)
 
-    # Calculate
-    file_checksum = calculate_checksum_crc32c_on(path)
-    file_stat = os.stat(path)
-
-    # Get
-    document = pdfplumber.open(path, unicode_norm="NFKC")
-
-    # Models
+    # Component
     attribute = model.DocumentAttribute(
-        document_type="UNKNOWN",
+        document_type=None,
         tax_agent_code=None,
         digital_signature=None,
         serial_no=None,
@@ -157,15 +259,32 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
         tax_code=None
     )
 
-    # Build
-    profile_content = {}
+    # Calculate
+    file_checksum = calculate_checksum_crc32c_on(path)
+    file_stat = os.stat(path)
+
+    # Get
+    document = pdfplumber.open(path, unicode_norm="NFKC")
 
     # Component
+    bucket_attr_general = {}
+    bucket_attr_seller = {}
+    bucket_attr_buyer = {}
     # (Information) The attribute of the document mostly in the first page only
-    #   and it's repeatable for format (same with others page)
-    # So that we can regex on the first page line by line
-    first_page_content = _pipeline_text_transform(string=document.pages[0].extract_text())
-    last_page_content = _pipeline_text_transform(string=document.pages[-1].extract_text())
+    #   and it's repeatable for format (same with others pages). So that we can regex on the first page line by line
+    first_page_content = _pipeline_text_transform(string=document.pages[0].extract_text(), mapping=DEFAULT_MAPPING_CHARACTERS)
+    last_page_content = _pipeline_text_transform(string=document.pages[-1].extract_text(), mapping=DEFAULT_MAPPING_CHARACTERS)
+    pattern_issue_date = re.compile(r"Ngày\s?(\(date\))?\s?(?P<date>\d{1,2})\s?tháng\s?(\(month\))?\s?(?P<month>\d{1,2})\s?năm(\(year\))?\s?(?P<year>\d{4})")
+    composite_features: dict[str, dict[str, list[str]]] = {
+        key: val["search_by"]
+        for key, val in MAPPING_ATTRIBUTE_KEY.items()
+        if val["type"] == "composite"
+    }
+    invoice_partner_features: dict[str, dict[str, list[str]]] = {
+        key: val["search_by"]
+        for key, val in MAPPING_ATTRIBUTE_KEY.items()
+        if val["type"] == "invoice_partner"
+    }
 
     if any([x in first_page_content.lower() for x in ("electronic invoice display")]):
         attribute["display_format"] = "ELECTRONIC_INVOICE_DISPLAY"
@@ -176,182 +295,117 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
     if any([x in first_page_content.lower() for x in ("hóa đơn giá trị gia tăng")]):
         attribute["document_type"] = "VALUE_ADDED_TAX_INVOICE"
 
-    # Loop
-    first_page_bucket_line_content = first_page_content.split("\n")
-    on_scrool_over_type: str = "" # One of seller, buyer for search role play
-    for on_ind, on_line in enumerate(first_page_bucket_line_content, start=0):
-
-        on_next_line = None
+    # Search issue date
+    # # Detect issue date. Example: Ngày (date) 25 tháng (month) 09 năm (year) 2025
+    search_result_issue_date = pattern_issue_date.search(first_page_content)
+    if search_result_issue_date is not None:
         try:
-            on_next_line = first_page_bucket_line_content[on_ind + 1]
-        except IndexError:
+            component_search_issue_date = search_result_issue_date.groupdict()
+            component_search_issue_date = {x: y.strip() for x, y in component_search_issue_date.items()}
+            attribute["issue_date"] = date(
+                year=int(component_search_issue_date["year"]),
+                month=int(component_search_issue_date["month"]),
+                day=int(component_search_issue_date["date"])
+            )
+        except ValueError:
             pass
 
-        # Detect issue date. Example: Ngày (date) 25 tháng (month) 09 năm (year) 2025
-        issue_date = None
-        if all([
-            any_match(on_line.lower(), "date", "day", "ngày"),
-            any_match(on_line.lower(), "month", "tháng"),
-            any_match(on_line.lower(), "year", "năm"),
-        ]):
+    # Handle
+    first_page_masked_content = first_page_content.replace("\n", "[STOP]")
+    for key, value in composite_features.items():
+        on_search_attribute = SearchAttribute(key=key, mapping_english=value["english"], mapping_vietnamese=value["vietnamese"])
+        first_page_masked_content = on_search_attribute.mask_attribute(first_page_masked_content, with_prefix_stop="STOP", included_colon_seperated=True)
 
-            # Extract
-            e_day = re.search(r"(?<=date\))\s?\d{1,}+", on_line, re.A) or re.search(r"(?<=day\))\s?\d{1,}+", on_line, re.A)
-            e_month = re.search(r"(?<=month\))\s?\d{1,}+", on_line, re.A)
-            e_year = re.search(r"(?<=year\))\s?\d{1,}+", on_line, re.A)
-            at_day = int(e_day.group(0)) if e_day is not None else None
-            at_month = int(e_month.group(0)) if e_month is not None else None
-            at_year = int(e_year.group(0)) if e_year is not None else None
+    # If
+    if re.search(r"^(Công ty TNHH)|(Hộ kinh doanh)", first_page_masked_content, re.I) is not None:
+        first_page_masked_content = "[COMPANY_NAME]:" + first_page_masked_content
 
-            # Note: The value of (year) can be broken into of flow steps.
-            # So if e_day, e_month is not None but e_year is None, required search for next '2xxx' in the next lines
-            if all([e_day is not None, e_month is not None, e_year is None]):
-                for n_ind in range(on_ind+1, len(first_page_bucket_line_content)):
-                    search_result_on_year = re.search(r"^2\d{3}$", first_page_bucket_line_content[n_ind].strip(), re.A)
-                    if search_result_on_year is not None:
-                        at_year = int(search_result_on_year.group(0))
-                        break
+    # Replace duplicate
+    checkpoint_partner = "seller"
+    first_page_masked_content = first_page_masked_content.replace("[STOP][STOP]", "[STOP]")
+    for _, line_content in enumerate(first_page_masked_content.split("[STOP]")):
 
-            if all([at_day is not None, at_month is not None, at_year is not None]):
-                issue_date = date(year=at_year, month=at_month, day=at_day)
+        # Found metadata
+        attr_search_result = re.search(r"(?P<key>\[[\w|\_]+\])(?=\:)(?P<content>.*)", line_content, re.I)
+        if attr_search_result is not None:
+            attr_key = attr_search_result.group("key").removeprefix("[").removesuffix("]").strip()
+            attr_value = attr_search_result.group("content").removeprefix(":").removesuffix(".").strip()
 
-            # Append
-            attribute["issue_date"] = issue_date
+            if attr_key in bucket_attr_seller or "buyer" in attr_key.lower():
+                checkpoint_partner = "buyer"
 
-        # Parse mapping value
-        if ":" in on_line:
-            key, val = on_line.split(":", maxsplit=1)
-            val = val.strip()
-
-            if any_match(key.lower(), "serial no", "ký hiệu"):
-                attribute["serial_no"] = val
-
-            elif any_match(key.lower(), "no.", "số"):
-                attribute["invoice_number"] = val
-
-            elif any_match(key.lower(), *(
-                "mã của cơ quan thuế",
-                "mã cơ quan thuế",
-                "mã của cqt",
-                "mã cqt"
-            )):
-                attribute["tax_agent_code"] = val
-
-            # Handlers
-            profile_content[key] = val
-
-        # Define scroll point
-        # Detect block of buyer | seller (related to same attribute like name, address, account_number, ...)
-        # then search words related until change scrolling point
-        if "seller" in on_line.lower():
-            on_scrool_over_type = "seller"
-        elif "buyer" in on_line.lower():
-            on_scrool_over_type = "buyer"
-
-        if on_scrool_over_type == "seller":
-
-            _, s_val = None, None
-            if len(on_line.split(":")) > 1:
-                _, s_val = on_line.split(":", maxsplit=1)
-                s_val = unicodedata.normalize("NFKC", s_val.strip())
-
-            if "seller" in on_line.lower():
-                seller["name"] = s_val
-
-            elif "tax code" in on_line.lower():
-                seller["tax_code"] = s_val
-
-            elif "address" in on_line.lower():
-                seller["address"] = s_val
-
-            elif "tel" in on_line.lower(): # TODO: Multiple in 1 line
-                seller["tel"] = s_val
-
-            elif "email" in on_line.lower(): # TODO: Multiple in 1 line
-                seller["email"] = s_val
-
-            elif "fax" in on_line.lower(): # TODO: Multiple in 1 line
-                seller["fax"] = s_val
-
-            elif "a/c no" in on_line.lower():
-                seller["account_number"] = s_val
-
-        if on_scrool_over_type == "buyer":
-
-            _, b_val = None, None
-            if len(on_line.split(":")) > 1:
-                _, b_val = on_line.split(":", maxsplit=1)
-                b_val = unicodedata.normalize("NFKC", b_val.strip())
-
-            if "buyer" in on_line.lower():
-                buyer["name"] = b_val
-
-            if "company's name" in on_line.lower():
-                buyer["company"] = b_val
-
-            elif "tax code" in on_line.lower():
-                buyer["tax_code"] = b_val
-
-            elif "address" in on_line.lower():
-                buyer["address"] = b_val
-
-            elif "tel" in on_line.lower(): # TODO: Multiple in 1 line
-                buyer["tel"] = b_val
-
-            elif "email" in on_line.lower(): # TODO: Multiple in 1 line
-                buyer["email"] = b_val
-
-            elif "fax" in on_line.lower(): # TODO: Multiple in 1 line
-                buyer["fax"] = b_val
-
-            elif "a/c no" in on_line.lower():
-                buyer["account_number"] = b_val
+            if attr_key in ("COMPANY_NAME", "TAX_CODE", "ADDRESS", "PHONE", "EMAIL", "PAYMENT_ACCOUNT", "PAYMENT_METHOD", "PAYMENT_CURRENCY"):
+                if checkpoint_partner == "seller":
+                    bucket_attr_seller[attr_key] = attr_value
+                elif checkpoint_partner == "buyer":
+                    bucket_attr_buyer[attr_key] = attr_value
+            else:
+                bucket_attr_general[attr_key] = attr_value
 
     # For last page extraction
-    for on_ind, on_line in enumerate(last_page_content.split("\n"), start=0):
+    # for on_ind, on_line in enumerate(last_page_content.split("\n"), start=0):
 
-        if any([
-            on_line.lower().startswith("Tra cứu hóa đơn".lower()),
-            on_line.lower().startswith("Tra cứu tại website".lower()),
-        ]):
+    #     if any([
+    #         on_line.lower().startswith("Tra cứu hóa đơn".lower()),
+    #         on_line.lower().startswith("Tra cứu tại website".lower()),
+    #     ]):
 
-            # Find on next index too
-            search_invoice_partner_block = " ".join([on_line, on_next_line or ""])
+    #         # Find on next index too
+    #         search_invoice_partner_block = " ".join([on_line, on_next_line or ""])
 
-            # Then chain by vietnamese before go to search zone
-            search_invoice_partner_block = (
-                search_invoice_partner_block.lower()
-                .replace("mã tra cứu", "search_keyword_id")
-                .replace("mã số thuế", "tax_code")
-                .replace("mst", "tax_code")
-            )
+    #         # Then chain by vietnamese before go to search zone
+    #         search_invoice_partner_block = (
+    #             search_invoice_partner_block.lower()
+    #             .replace("mã tra cứu", "search_keyword_id")
+    #             .replace("mã số thuế", "tax_code")
+    #             .replace("mst", "tax_code")
+    #         )
 
-            # Find
-            search_keyword_id_result = re.search(
-                r"(?<=search_keyword_id\:)\s?(?P<keyword_id>\w+)",
-                search_invoice_partner_block,
-                re.I
-            )
-            if search_keyword_id_result is not None:
-                invoice_partner["search_keyword_id"] = search_keyword_id_result.group("keyword_id").upper()
+    #         # Find
+    #         search_keyword_id_result = re.search(
+    #             r"(?<=search_keyword_id\:)\s?(?P<keyword_id>\w+)",
+    #             search_invoice_partner_block,
+    #             re.I
+    #         )
+    #         if search_keyword_id_result is not None:
+    #             invoice_partner["search_keyword_id"] = search_keyword_id_result.group("keyword_id").upper()
 
-            # Find
-            endpoint_result = re.search(
-                r"\bhttps?://(?:[\w\-]+\.)+[\w\-]+\b",
-                search_invoice_partner_block,
-                re.I
-            )
-            if endpoint_result is not None:
-                invoice_partner["endpoint_search_invoice"] = endpoint_result.group().strip()
+    #         # Find
+    #         endpoint_result = re.search(
+    #             r"\bhttps?://(?:[\w\-]+\.)+[\w\-]+\b",
+    #             search_invoice_partner_block,
+    #             re.I
+    #         )
+    #         if endpoint_result is not None:
+    #             invoice_partner["endpoint_search_invoice"] = endpoint_result.group().strip()
 
-            # Find
-            tax_code_result = re.search(
-                r"(?<=tax_code\:)\s?(?P<tax_code>\b\w+)",
-                search_invoice_partner_block,
-                re.I
-            )
-            if tax_code_result is not None:
-                invoice_partner["tax_code"] = tax_code_result.group("tax_code").strip()
+    #         # Find
+    #         tax_code_result = re.search(
+    #             r"(?<=tax_code\:)\s?(?P<tax_code>\b\w+)",
+    #             search_invoice_partner_block,
+    #             re.I
+    #         )
+    #         if tax_code_result is not None:
+    #             invoice_partner["tax_code"] = tax_code_result.group("tax_code").strip()
+
+    # Checkpoint mapping
+    fields_attriute = list(bucket_attr_general)
+    fields_sellers = list(bucket_attr_seller)
+    fields_buyers = list(bucket_attr_buyer)
+    if len(bucket_attr_general) != 0:
+        for k, v in bucket_attr_general.items():
+            if k.lower() in fields_attriute:
+                attribute[k.lower()] = v
+
+    if len(bucket_attr_seller) != 0:
+        for k, v in bucket_attr_seller.items():
+            if k.lower() in fields_sellers:
+                seller[k.lower()] = v
+
+    if len(bucket_attr_buyer) != 0:
+        for k, v in bucket_attr_buyer.items():
+            if k.lower() in fields_buyers:
+                buyer[k] = v
 
     # TODO: Current can't not process to find the digital signature. It's likely like bounding box
     # By search like: document.pages[0].objects["image"][0]["stream"].get_rawdata()
@@ -385,7 +439,7 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
             for record in table:
 
                 # Empty record
-                if _is_list_contain_empty(element=record):
+                if is_list_contain_empty(element=record):
                     continue
 
                 # Build
@@ -397,23 +451,23 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
 
                 # For the search for (a) main header and (b) subheader
                 # This only exist 1 so if they are exists, ignore the validate the next element
-                if _is_main_header(element=noralization_record):
+                if is_main_header(element=noralization_record):
                     if len(main_header) == 0:
                         on_table_length = len(noralization_record)
                         main_header.extend(noralization_record)
                     continue
 
-                if _is_sub_header(element=noralization_record):
+                if is_sub_header(element=noralization_record):
                     if len(sub_header) == 0:
                         sub_header.extend(noralization_record)
                     continue
 
-                if _is_group_total_amount_number(element=noralization_record):
+                if is_group_total_amount_number(element=noralization_record):
                     if len(total_amount_figure) == 0:
                         total_amount_figure.extend(noralization_record)
                     continue
 
-                if _is_group_total_amount_in_words(element=noralization_record):
+                if is_group_total_amount_in_words(element=noralization_record):
                     if len(total_amount_in_words) == 0:
                         total_amount_in_words.extend(noralization_record)
                     continue
@@ -435,8 +489,12 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
                 # Build
                 noralization_record = {
                     "no": int(noralization_record[0]),
-                    "product_description": str(noralization_record[1]).replace("\n", " ") if noralization_record[1] is not None else None,
-                    "unit": noralization_record[2].lower(),
+                    "product_description": (
+                        unicodedata.normalize("NFKD", str(noralization_record[1])).replace("\n", " ")
+                        if noralization_record[1] is not None
+                        else None
+                    ),
+                    "unit": unicodedata.normalize("NFKD", noralization_record[2]).lower(),
                     "quantity": int(strx.str_to_number(string=noralization_record[3], radix=",", delimiter=".")),
                     "unit_price": float(strx.str_to_number(string=noralization_record[4], radix=",", delimiter=".")),
                     "amount": float(strx.str_to_number(string=noralization_record[5], radix=",", delimiter=".")),

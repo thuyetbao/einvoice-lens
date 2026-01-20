@@ -6,10 +6,12 @@ import pathlib
 from datetime import date, datetime, UTC as timezoneUTC
 import re
 import unicodedata
+from functools import partial
 
 # External
 import pdfplumber
 import strx
+from viet_text_tools import normalize_diacritics
 
 # Internal
 from einvoice_lens._constant import DEFAULT_MAPPING_CHARACTERS
@@ -72,14 +74,14 @@ MAPPING_ATTRIBUTE_KEY: dict[str, dict[str, list[str]]] = {
     "WEBSITE": {"type": "composite", "search_by": {"english": ["Website"], "vietnamese": ["Trang thông tin", "Trang web"]}},
     "EMAIL": {"type": "composite", "search_by": {"english": ["Email"], "vietnamese": ["Email"]}},
     "FAX": {"type": "composite", "search_by": {"english": ["Fax"], "vietnamese": ["Fax"]}},
-    "PAYMENT_ACCOUNT": {"type": "composite", "search_by": {"english": ["Account number", "a/c no", "Account No"], "vietnamese": ["Số tài khoản", "Tài khoản thanh toán"]}},
+    "PAYMENT_ACCOUNT": {"type": "composite", "search_by": {"english": ["Account number", "a/c no", "Account No"], "vietnamese": ["Số tài khoản", "Tài khoản thanh toán"]}}, # noqa: E501
     "PAYMENT_METHOD": {"type": "composite", "search_by": {"english": ["Payment method"], "vietnamese": ["Phương thức thanh toán", "Hình thức thanh toán"]}},
     "PAYMENT_CURRENCY": {"type": "composite", "search_by": {"english": ["Payment currency"], "vietnamese": ["Đồng tiền thanh toán", "Tiền tệ thanh toán"]}},
     "TOTAL_AMOUNT": {"type": "composite", "search_by": {"english": ["Total amount"], "vietnamese": ["Cộng tiền hàng"]}}, # NO VAT
-    "TOTAL_AMOUNT_AFTER_VAT": {"type": "composite", "search_by": {"english": ["Total amount after VAT"], "vietnamese": ["Tổng tiền thanh toán", "Thành tiền (sau thuế)"]}}, # Include VAT
+    "TOTAL_AMOUNT_AFTER_VAT": {"type": "composite", "search_by": {"english": ["Total amount after VAT"], "vietnamese": ["Tổng tiền thanh toán", "Thành tiền (sau thuế)"]}}, # Include VAT # noqa: E501
     "TOTAL_AMOUNT_IN_WORDS": {"type": "composite", "search_by": {"english": ["Total amount in words", "In words"], "vietnamese": ["Số tiền viết bằng chữ"]}},
-    "VAT_RATE": {"type": "composite", "search_by": {"english": ["VAT rate", "VAT (%)"], "vietnamese": ["Thuế suất giá trị gia tăng", "Thuế suất (%)", "Thuế suất GTGT"]}},
-    "VAT_AMOUNT": {"type": "composite", "search_by": {"english": ["VAT amount", "VAT (VND)"], "vietnamese": ["Tiền thuế GTGT", "Tiền thuế VAT", "Giá trị thuế GTGT"]}},
+    "VAT_RATE": {"type": "composite", "search_by": {"english": ["VAT rate", "VAT (%)"], "vietnamese": ["Thuế suất giá trị gia tăng", "Thuế suất (%)", "Thuế suất GTGT"]}}, # noqa: E501
+    "VAT_AMOUNT": {"type": "composite", "search_by": {"english": ["VAT amount", "VAT (VND)"], "vietnamese": ["Tiền thuế GTGT", "Tiền thuế VAT", "Giá trị thuế GTGT"]}}, # noqa: E501
     "SEARCH_ENDPOINT": {"type": "invoice_partner", "search_by": {"english": ["Reference at"], "vietnamese": ["Tra cứu tại website"]}},
     "SEARCH_KEYWORD_ID": {"type": "invoice_partner", "search_by": {"english": ["Reference ID"], "vietnamese": ["Mã tìm kiếm", "Mã tra cứu"]}},
     "SEARCH_PARTNER": {"type": "invoice_partner", "search_by": {"english": ["Distributed by"], "vietnamese": ["Phát hành bởi"]}},
@@ -168,12 +170,11 @@ class SearchAttribute:
         return string
 
 
-def _pipeline_text_transform(*, string: str | None = None, mapping: dict[str, str] | None = None) -> str:
+def pipe_content_transform(*, string: str | None = None, mapping: dict[str, str] | None = None) -> str:
     """Internal pipeline that handle the transformation on document (Pre-built pipeline)
 
-    Included:
+    Included following steps:
     - Apply mapping with str.translate
-    - Normalize Unicode
     - Collapse multi-spaces
     - Strip weird line breaks
     - Remove leftover control characters
@@ -184,9 +185,6 @@ def _pipeline_text_transform(*, string: str | None = None, mapping: dict[str, st
     # Translate
     if isinstance(mapping, dict):
         string = string.translate(str.maketrans(mapping))
-
-    # Normalize
-    string = unicodedata.normalize("NFKD", string)
 
     # Remove control characters except tab/newline
     string = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", string)
@@ -201,6 +199,12 @@ def _pipeline_text_transform(*, string: str | None = None, mapping: dict[str, st
     string = string.replace("\xad", "")
 
     return string
+
+
+def normalize_vi_keep_accents(text: str) -> str:
+    text = unicodedata.normalize("NFC", text)
+    text = normalize_diacritics(text)
+    return text
 
 
 def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
@@ -259,22 +263,17 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
         tax_code=None
     )
 
-    # Calculate
-    file_checksum = calculate_checksum_crc32c_on(path)
-    file_stat = os.stat(path)
+    # Build
+    _pipe_content_transform = partial(pipe_content_transform, mapping=DEFAULT_MAPPING_CHARACTERS)
+    pattern_issue_date = re.compile(r"Ngày\s?(\(date\))?\s?(?P<date>\d{1,2})\s?tháng\s?(\(month\))?\s?(?P<month>\d{1,2})\s?năm(\(year\))?\s?(?P<year>\d{4})")
 
     # Get
+    file_checksum = calculate_checksum_crc32c_on(path)
+    file_stat = os.stat(path)
     document = pdfplumber.open(path, unicode_norm="NFKC")
-
-    # Component
-    bucket_attr_general = {}
-    bucket_attr_seller = {}
-    bucket_attr_buyer = {}
-    # (Information) The attribute of the document mostly in the first page only
-    #   and it's repeatable for format (same with others pages). So that we can regex on the first page line by line
-    first_page_content = _pipeline_text_transform(string=document.pages[0].extract_text(), mapping=DEFAULT_MAPPING_CHARACTERS)
-    last_page_content = _pipeline_text_transform(string=document.pages[-1].extract_text(), mapping=DEFAULT_MAPPING_CHARACTERS)
-    pattern_issue_date = re.compile(r"Ngày\s?(\(date\))?\s?(?P<date>\d{1,2})\s?tháng\s?(\(month\))?\s?(?P<month>\d{1,2})\s?năm(\(year\))?\s?(?P<year>\d{4})")
+    all_content = normalize_vi_keep_accents(_pipe_content_transform(string=" | ".join([page.extract_text() for page in document.pages])))
+    first_page_content = normalize_vi_keep_accents(_pipe_content_transform(string=document.pages[0].extract_text()))
+    last_page_content = None if len(document.pages) == 1 else normalize_vi_keep_accents(_pipe_content_transform(string=document.pages[-1].extract_text()))
     composite_features: dict[str, dict[str, list[str]]] = {
         key: val["search_by"]
         for key, val in MAPPING_ATTRIBUTE_KEY.items()
@@ -285,19 +284,27 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
         for key, val in MAPPING_ATTRIBUTE_KEY.items()
         if val["type"] == "invoice_partner"
     }
+    attrs_general = {}
+    attrs_seller = {}
+    attrs_buyer = {}
+    _ = first_page_content
+    _ = last_page_content
+    _ = invoice_partner_features
 
-    if any([x in first_page_content.lower() for x in ("electronic invoice display")]):
+    # Search: format type
+    if any([unicodedata.normalize("NFKC", x) in all_content.lower() for x in ("electronic invoice display",)]):
         attribute["display_format"] = "ELECTRONIC_INVOICE_DISPLAY"
 
-    if any([x in first_page_content.lower() for x in ("sales invoice", "hóa đơn bán hàng", "đơn bán hàng")]):
+    # Search: document type
+    if any([unicodedata.normalize("NFKC", x) in all_content.lower() for x in ("sales invoice", "hóa đơn bán hàng", "đơn bán hàng")]):
         attribute["document_type"] = "SALES_INVOICE"
 
-    if any([x in first_page_content.lower() for x in ("hóa đơn giá trị gia tăng")]):
+    elif any([unicodedata.normalize("NFKC", x) in all_content.lower() for x in ("hóa đơn giá trị gia tăng",)]):
         attribute["document_type"] = "VALUE_ADDED_TAX_INVOICE"
 
     # Search issue date
     # # Detect issue date. Example: Ngày (date) 25 tháng (month) 09 năm (year) 2025
-    search_result_issue_date = pattern_issue_date.search(first_page_content)
+    search_result_issue_date = pattern_issue_date.search(all_content)
     if search_result_issue_date is not None:
         try:
             component_search_issue_date = search_result_issue_date.groupdict()
@@ -311,19 +318,27 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
             pass
 
     # Handle
-    first_page_masked_content = first_page_content.replace("\n", "[STOP]")
+    all_content_masked_stop = all_content.replace("\n", "[STOP]")
     for key, value in composite_features.items():
-        on_search_attribute = SearchAttribute(key=key, mapping_english=value["english"], mapping_vietnamese=value["vietnamese"])
-        first_page_masked_content = on_search_attribute.mask_attribute(first_page_masked_content, with_prefix_stop="STOP", included_colon_seperated=True)
+        on_search_attribute = SearchAttribute(
+            key=key,
+            mapping_english=value["english"],
+            mapping_vietnamese=value["vietnamese"]
+        )
+        all_content_masked_stop = on_search_attribute.mask_attribute(
+            string=all_content_masked_stop,
+            with_prefix_stop="STOP",
+            included_colon_seperated=True
+        )
 
     # If
-    if re.search(r"^(Công ty TNHH)|(Hộ kinh doanh)", first_page_masked_content, re.I) is not None:
-        first_page_masked_content = "[COMPANY_NAME]:" + first_page_masked_content
+    if re.search(r"^(Công ty TNHH)|(Hộ kinh doanh)", all_content_masked_stop, re.I) is not None:
+        all_content_masked_stop = "[COMPANY_NAME]:" + all_content_masked_stop
 
     # Replace duplicate
     checkpoint_partner = "seller"
-    first_page_masked_content = first_page_masked_content.replace("[STOP][STOP]", "[STOP]")
-    for _, line_content in enumerate(first_page_masked_content.split("[STOP]")):
+    all_content_masked_stop = all_content_masked_stop.replace("[STOP][STOP]", "[STOP]")
+    for _, line_content in enumerate(all_content_masked_stop.split("[STOP]")):
 
         # Found metadata
         attr_search_result = re.search(r"(?P<key>\[[\w|\_]+\])(?=\:)(?P<content>.*)", line_content, re.I)
@@ -331,16 +346,16 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
             attr_key = attr_search_result.group("key").removeprefix("[").removesuffix("]").strip()
             attr_value = attr_search_result.group("content").removeprefix(":").removesuffix(".").strip()
 
-            if attr_key in bucket_attr_seller or "buyer" in attr_key.lower():
+            if attr_key in attrs_seller or "buyer" in attr_key.lower():
                 checkpoint_partner = "buyer"
 
             if attr_key in ("COMPANY_NAME", "TAX_CODE", "ADDRESS", "PHONE", "EMAIL", "PAYMENT_ACCOUNT", "PAYMENT_METHOD", "PAYMENT_CURRENCY"):
                 if checkpoint_partner == "seller":
-                    bucket_attr_seller[attr_key] = attr_value
+                    attrs_seller[attr_key] = attr_value
                 elif checkpoint_partner == "buyer":
-                    bucket_attr_buyer[attr_key] = attr_value
+                    attrs_buyer[attr_key] = attr_value
             else:
-                bucket_attr_general[attr_key] = attr_value
+                attrs_general[attr_key] = attr_value
 
     # For last page extraction
     # for on_ind, on_line in enumerate(last_page_content.split("\n"), start=0):
@@ -389,22 +404,22 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
     #             invoice_partner["tax_code"] = tax_code_result.group("tax_code").strip()
 
     # Checkpoint mapping
-    fields_attriute = list(bucket_attr_general)
-    fields_sellers = list(bucket_attr_seller)
-    fields_buyers = list(bucket_attr_buyer)
-    if len(bucket_attr_general) != 0:
-        for k, v in bucket_attr_general.items():
-            if k.lower() in fields_attriute:
+    field_attributes = list(attrs_general)
+    field_sellers = list(attrs_seller)
+    field_buyers = list(attrs_buyer)
+    if len(attrs_general) != 0:
+        for k, v in attrs_general.items():
+            if k.lower() in field_attributes:
                 attribute[k.lower()] = v
 
-    if len(bucket_attr_seller) != 0:
-        for k, v in bucket_attr_seller.items():
-            if k.lower() in fields_sellers:
+    if len(attrs_seller) != 0:
+        for k, v in attrs_seller.items():
+            if k.lower() in field_sellers:
                 seller[k.lower()] = v
 
-    if len(bucket_attr_buyer) != 0:
-        for k, v in bucket_attr_buyer.items():
-            if k.lower() in fields_buyers:
+    if len(attrs_buyer) != 0:
+        for k, v in attrs_buyer.items():
+            if k.lower() in field_buyers:
                 buyer[k] = v
 
     # TODO: Current can't not process to find the digital signature. It's likely like bounding box
@@ -444,7 +459,7 @@ def parse_commerical_invoice(path: str) -> model.CommericalInvoiceResult:
 
                 # Build
                 noralization_record = [
-                    _pipeline_text_transform(string=on_component).replace("\n", " ")
+                    pipe_content_transform(string=on_component).replace("\n", " ")
                     if on_component is not None else None
                     for on_component in record
                 ]

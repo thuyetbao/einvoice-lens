@@ -49,5 +49,5 @@ repos:
             "--aggressive",
             "--aggressive",
             "--jobs=4",
-            "einvoice-lens",
+            "einvoice_lens",
           ]

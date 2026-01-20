@@ -52,10 +52,12 @@ Install package from PyPI distribution [`einvoice-lens`](https://pypi.org/projec
 pip install einvoice-lens
 ```
 
+Using the public function `parse_commerical_invoice` to parse invoice from path. Supported only for PDF file, otherwise will raise error.
+
 ```py
 from einvoice_lens import parse_commerical_invoice
 
-output = parse_commerical_invoice(path="path/to/document.pdf")
+result = parse_commerical_invoice(path="path/to/document.pdf")
 ```
 
 or, using cli by
@@ -63,6 +65,39 @@ or, using cli by
 ```bash
 python -m einvoice_lens.cli --path path/to/document.pdf
 ```
+
+<!-- ### **Models** -->
+
+<!-- | Name                    | Type                                | Optional | Description                    |
+| ----------------------- | ----------------------------------- | -------- | ------------------------------ |
+| attribute               | DocumentAttribute                   |          | Document attribute information |
+| seller                  | SellerInformation                   |          | Seller information             |
+| buyer                   | BuyerInformation                    |          | Buyer information              |
+| invoice_partner         | InvoicePartnerInformation           |          | Invoice partner information    |
+| digital_signature       | DigitalSignature                    |          | Digital signature information  |
+| document_type           | Literal["SALES_INVOICE", "VALUE_ADDED_TAX_INVOICE"] | True         | Document type                  |
+| display_format          | str                                 |          | Display format                 |
+| issue_date              | date                                |          | Issue date                     |
+| tax_agent_code          | str                                 |          | Tax agent code                 |
+| serial_no               | str                                 |          | Serial number                  |
+| invoice_number          | str                                 |          | Invoice number                 |
+| name                    | str                                 |          | Name                           |
+| tax_code                | str                                 |          | Tax code                       |
+| address                 | str                                 |          | Address                        |
+| tel                     | str                                 |          | Telephone                      |
+| email                   | str                                 |          | Email                          |
+| fax                     | str                                 |          | Fax                            |
+| account_number          | str                                 |          | Account number                 |
+| endpoint_search_invoice | str                                 |          | Endpoint to search invoice     |
+| search_keyword_id       | str                                 |          | Search keyword id              |
+| logo                    | str                                 |          | Logo                           |
+| start                   | datetime                            |          | Start of processing            |
+| end                     | datetime                            |          | End of processing              |
+| processing_in_seconds   | float                               |          | Processing time in seconds     |
+| source_path             | str                                 |          | Source path                    |
+| checksum_crc32c         | str                                 |          | Checksum CRC32C                |
+| total_pages             | int                                 |          | Total pages                    |
+| file_size_mb            | float                               |          | File size in megabytes         | -->
 
 **Documentation**:
 

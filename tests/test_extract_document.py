@@ -59,7 +59,7 @@ def test_extract_document_base_case(resource_path):
     expected_dataset = pl.DataFrame({
         "no": [1, 2, 3],
         "product_description": ["Xe cảnh sát SH", "Xe rác SH", "Xe chở hàng SH"],
-        "unit": ["Chiếc", "Chiếc", "Chiếc"],
+        "unit": ["chiếc", "chiếc", "chiếc"],
         "quantity": [40, 20, 10],
         "unit_price": [37000.0, 40000.0, 40000.0],
         "amount": [1480000.0, 800000.0, 400000.0],

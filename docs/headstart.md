@@ -88,12 +88,12 @@ To test the package locally, execute the following command locally:
 ```bash
 # Rull all
 hatch run test
+
 # Run specific test
 hatch run test tests/endpoint/$endpoint_name/$test_file
+
 # Run only last failed case
 hatch run test --last-failed
-# Run with argument
-hatch run test --auth-username $USER_NAME --auth-password $USER_PASSWORD
 ```
 
-- Create PR and write your changelog
+- Create Pull Request PR and write your changelog

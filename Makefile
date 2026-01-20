@@ -43,6 +43,8 @@ pack-build:
 pack-test:
 	@hatch run test;
 
+test: pack-test
+
 docs:
 	@hatch run docs;
 

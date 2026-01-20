@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.4 (2025-12-12)
+
+- [x] (engine) Upgrade engine by regex boundary on vietnamese keyword for extract and more accurate.
+
+- [x] (fix) Updated pipelines transformation on text string and configuration form in normalize
+
+- [x] (deps) Removed `polars` as the dependencies
+
+- [x] (cli) Added parameter `output` to cli that write json to file
+
+- [ ] Added metadata for `Total Amount` and `In Words`
+
+- [ ] Added grouth truth for define the dataset is satified (total rows, total amount)
+
 ## v0.2.3 (2025-11-30)
 
 - [x] (feature) Normalized string output using the `strx` package.
